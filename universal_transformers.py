@@ -777,7 +777,7 @@ def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode)
 
                 R_N_t = (1.0 - _prev_accum_halt) * _go_sign
 
-                _current_accum_halt = _prev_accum_halt + R_N_t
+                _current_accum_halt = _prev_accum_halt * _go_sign + R_N_t
 
                 _final_outputs += _current_outputs * R_N_t
 
