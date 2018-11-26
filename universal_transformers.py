@@ -406,9 +406,10 @@ def model_fn(features, labels, mode, params):
     Returns:
         (EstimatorSpec): Model to be run by Estimator.
     """
-    label_one_hot_mask = None
-    logits_mask = None
-    tgt_seq_mask = None
+    # Loss, training and eval operations are not needed during inference.
+    loss = None
+    train_op = None
+    eval_metric_ops = {}
 
     def label_smoothing(inputs, l_smooth=True):
         if l_smooth:
@@ -423,26 +424,15 @@ def model_fn(features, labels, mode, params):
         features, feature_len = features
         labels_in, label_out, label_len = labels
 
-        tgt_seq_mask = tf.cast(tf.sequence_mask(label_len, FLAGS.max_output_time_steps), tf.float32)  # [B,T]
-        tgt_seq_mask = tf.expand_dims(tgt_seq_mask, axis=2)  # [B,T,1]
+        tgt_seq_mask_original = tf.cast(tf.sequence_mask(label_len, FLAGS.max_output_time_steps), tf.float32)  # [B,T]
+        tgt_seq_mask = tf.expand_dims(tgt_seq_mask_original, axis=2)  # [B,T,1]
 
         label_one_hot = tf.one_hot(indices=label_out, depth=FLAGS.output_vocab_size, axis=-1)  # [B, T, V]
         label_one_hot_mask = label_one_hot * tgt_seq_mask  # only use the valuable data, 0 mask the non-valuable data
         logits = architecture(features, feature_len, labels_in, label_len, mode)
         logits_mask = logits * tgt_seq_mask  # only use the valuable data, 0 mask the non-valuable data
         predictions = tf.nn.softmax(logits) * tgt_seq_mask  # only use the valuable data, 0 mask the non-valuable data
-    else:
-        feature_len = features[:, -1]
-        features = features[:, :-1]
-        labels_in = None
-        label_len = None
-        predictions = architecture(features, feature_len, labels_in, label_len, mode)
 
-    # Loss, training and eval operations are not needed during inference.
-    loss = None
-    train_op = None
-    eval_metric_ops = {}
-    if mode != ModeKeys.PREDICT:
         loss = tf.nn.softmax_cross_entropy_with_logits_v2(
             labels=label_smoothing(label_one_hot_mask, FLAGS.label_smooth), logits=logits_mask)
         loss = tf.reduce_sum(loss) / tf.count_nonzero(tgt_seq_mask, dtype=tf.float32)
@@ -451,8 +441,15 @@ def model_fn(features, labels, mode, params):
         train_op = get_train_op(loss, params)
         # only use the valuable data, 0 mask the non-valuable data
         eval_metric_ops = get_eval_metric_ops(tf.argmax(label_one_hot_mask, axis=-1), tf.argmax(predictions, axis=-1),
-                                              tf.squeeze(tgt_seq_mask))
-        tf.summary.tensor_summary("tgt_seq_mask", tgt_seq_mask, display_name="tgt_seq_mask")
+                                              tgt_seq_mask_original)
+
+    else:
+        feature_len = features[:, -1]
+        features = features[:, :-1]
+        labels_in = None
+        label_len = None
+        predictions = architecture(features, feature_len, labels_in, label_len, mode)
+
     return tf.estimator.EstimatorSpec(
         mode=mode,
         predictions=predictions,
