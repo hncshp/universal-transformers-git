@@ -797,7 +797,7 @@ def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode)
                 _current_halt = (_current_halt * tf.cast(tf.less(_current_RNT_sign, 1.0),
                                                          dtype=tf.float32) + R_N_t) * _go_sign
 
-                _current_accum_halt = _prev_accum_halt + _current_halt
+                _current_accum_halt = (_prev_accum_halt + _current_halt) * _go_sign
 
                 _final_outputs += _current_outputs * _current_halt
 
