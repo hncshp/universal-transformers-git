@@ -381,8 +381,20 @@ def run_main(argv=None):
 
     pred_out = np.transpose(pred_out, [1, 0, 2])  # [T,B,V]
 
-    pred_label_show = de_batches2string(pred_label)
-    pred_data_show = de_batches2string(pred_out)
+    def clean(inputs):
+        out = []
+        for each in inputs:
+            temp = ''
+            for word in each.strip().split():
+                if word != EOS:
+                    temp += word + ' '
+                else:
+                    break
+            out.append(temp.strip())
+        return out
+
+    pred_label_show = clean(de_batches2string(pred_label))
+    pred_data_show = clean(de_batches2string(pred_out))
 
     for label_show, data_show in zip(pred_label_show, pred_data_show):
         print("----------------------------------------------------------------------------------------")
