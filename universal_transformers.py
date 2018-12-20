@@ -1,14 +1,11 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # ----------------------------------------------------------------------------------------------------------------------
 # Author: Huang Ping
-# Date: Sept 30, 2018
+# Date: June 28, 2018
 #
 #                                          ****  MODEL DESCRIPTION  ****
 #                                        ACT based Universal Transformers.
 # ----------------------------------------------------------------------------------------------------------------------
-
-# the real division operations. if not import division, 5/3=1, if import division, 5/3=1.66666
-# "from __future__  import division" shall be before all the import parts
 from __future__ import division
 
 from six.moves import range
@@ -17,15 +14,12 @@ import argparse
 import sys
 import numpy as np
 import tensorflow as tf
-from tqdm import trange
 from tensorflow.python.ops import lookup_ops
 import functools
 import math
 import logging
 from time import time
 
-
-# Show debugging output
 tf.logging.set_verbosity(tf.logging.DEBUG and tf.logging.INFO)
 
 
@@ -39,12 +33,13 @@ def get_time():
 
 # ----------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------Global parameters definition-------------------------------------------------
+w_split = True
 
 PAD = '<PAD>'
 EOS = '</S>'
 UNK = '<UNK>'
 data_dir = './en_vi/'
-
+buckets = 5
 
 PAD_ID = 0
 EOS_ID = 1
@@ -62,9 +57,7 @@ src_max_length, tgt_max_length = 0, 0
 # ----------------------------------------------------------------------------------------------------------------------
 # --------------------------------functions definition for whole program utility----------------------------------------
 
-# define the src and target vocabulary. the table constructed by lookup_ops need to be initialized.
 def create_vocab_tables(src_vocab_file, tgt_vocab_file):
-    # Creates vocab tables for src_vocab_file and tgt_vocab_file.
     src_vocab_table = lookup_ops.index_table_from_file(
         src_vocab_file, default_value=UNK_ID)
 
@@ -74,7 +67,6 @@ def create_vocab_tables(src_vocab_file, tgt_vocab_file):
     return src_vocab_table, tgt_vocab_table
 
 
-# none tensor style vocab and word to id map. for data and image show in prediction stage.
 def np_vocab_processing(vocab_file):
     vocab = []
     vocab_size = 0
@@ -87,7 +79,6 @@ def np_vocab_processing(vocab_file):
     return word_2_int_map, vocab, vocab_size
 
 
-# statistic the sentence max length for max_input and max_output parameters definition.
 def max_line_length(file_name):
     max_length = 0
     with open(file_name, 'r', encoding='UTF-8') as f:
@@ -100,8 +91,6 @@ def max_line_length(file_name):
                 max_length = len(content)
     return max_length
 
-
-# self-defined average_length function for src and tgt average length estimation
 
 def average_length(file_name):
     total_length = 0
@@ -119,8 +108,6 @@ def average_length(file_name):
 
     return round((total_length / item_num) * FLAGS.alpha)
 
-
-# self-defined one_hot function.
 def one_hot(one_data, vocab_size):
     length = len(one_data)
     one_hot_array = np.zeros(shape=(length, vocab_size), dtype=np.float32)
@@ -129,7 +116,6 @@ def one_hot(one_data, vocab_size):
     return one_hot_array
 
 
-# self-defined function to process the one_hot transition for files.
 def en_translation_file_processing(translation_file, seq_length, vocab_size):
     outcome = []
     with open(translation_file, 'r', encoding='UTF-8') as f:
@@ -139,7 +125,7 @@ def en_translation_file_processing(translation_file, seq_length, vocab_size):
             else:
                 content = line.strip()
             feature_vector = list(map(lambda word: encoder_word_int_map.get(word, UNK_ID), content))
-            feature_temp = np.full((seq_length), PAD_ID, np.int32)  # full fill with UNK_ID
+            feature_temp = np.full((seq_length), PAD_ID, np.int32)  # full fill with PAD_ID
             if len(feature_vector) > seq_length:
                 feature_temp = feature_vector[:seq_length]
             else:
@@ -148,8 +134,6 @@ def en_translation_file_processing(translation_file, seq_length, vocab_size):
             outcome.append(feature_one_hot)  # [B,T,V]
     return outcome
 
-
-# self-defined function to process the one_hot transition for files.
 def de_translation_file_processing(translation_file, seq_length, vocab_size):
     outcome = []
     with open(translation_file, 'r', encoding='UTF-8') as f:
@@ -159,7 +143,7 @@ def de_translation_file_processing(translation_file, seq_length, vocab_size):
             else:
                 content = line.strip()
             feature_vector = list(map(lambda word: decoder_word_int_map.get(word, UNK_ID), content))
-            feature_temp = np.full((seq_length), PAD_ID, np.int32)  # full fill with UNK_ID
+            feature_temp = np.full((seq_length), PAD_ID, np.int32)  # full fill with PAD_ID
             if len(feature_vector) > (seq_length - 1):
                 feature_temp[:(seq_length - 1)] = feature_vector[:(seq_length - 1)]
                 feature_temp[(seq_length - 1)] = EOS_ID
@@ -170,14 +154,9 @@ def de_translation_file_processing(translation_file, seq_length, vocab_size):
             outcome.append(feature_one_hot)  # [B,T,V]
     return outcome
 
-
-# self-defined function for one_hot to word transition based on the vocabulary.
 def en_characters(probabilities):
     return [encoder_vocab[c] for c in np.argmax(probabilities, 1)]
 
-
-# self-defined function for batched one_hot data to string transition.
-# NOTE: the input data shall be of [T,B,V] shape.
 def en_batches2string(batches):
     s = [''] * batches[0].shape[0]
     for b in batches:
@@ -189,13 +168,9 @@ def en_batches2string(batches):
     return s
 
 
-# self-defined function for one_hot to word transition based on the vocabulary.
 def de_characters(probabilities):
     return [decoder_vocab[c] for c in np.argmax(probabilities, 1)]
 
-
-# self-defined function for batched one_hot data to string transition.
-# NOTE: the input data shall be of [T,B,V] shape.
 def de_batches2string(batches):
     s = [''] * batches[0].shape[0]
     for b in batches:
@@ -205,9 +180,6 @@ def de_batches2string(batches):
             s = [''.join(x) for x in zip(s, de_characters(b))]
     return s
 
-
-# self-defined function for accuracy in prediction stage.
-# labels and predictions shall be of [T,B,V] shape
 def accuracy(labels, predictions):
     return np.sum(np.argmax(labels, axis=-1) == np.argmax(predictions, axis=-1)) / (labels.shape[0] * labels.shape[1])
 
@@ -242,29 +214,29 @@ def add_Argumets(parser):
                         help='input vocabulary size.')
     parser.add_argument("--output_vocab_size", type=int, default=0,
                         help='output vocabulary size.')
-    parser.add_argument("--max_input_time_steps", type=int, default=40,
+    parser.add_argument("--max_input_time_steps", type=int, default=20,
                         help='input sequence length.')
-    parser.add_argument("--max_output_time_steps", type=int, default=45,
+    parser.add_argument("--max_output_time_steps", type=int, default=30,
                         help='output sequence length.')
-    parser.add_argument("--num_buckets", type=int, default=5,
+    parser.add_argument("--num_buckets", type=int, default=buckets,
                         help='number of buckets.')
     parser.add_argument("--src_bucket_width", type=int, default=0,
                         help='src_bucket_width.')
     parser.add_argument("--tgt_bucket_width", type=int, default=0,
                         help='tgt_bucket_width.')
-    parser.add_argument("--dropout", type=float, default=0.2,
+    parser.add_argument("--dropout", type=float, default=0.1,
                         help="Dropout rate (not keep_prob)")
-    parser.add_argument("--num_units", type=int, default=128,
+    parser.add_argument("--num_units", type=int, default=512,
                         help="hidden node number.")
     parser.add_argument("--num_heads", type=int, default=8,
                         help="head number.")
-    parser.add_argument("--encoder_maxsteps", type=int, default=12,
-                        help="encoder maxsteps number.")
-    parser.add_argument("--decoder_maxsteps", type=int, default=12,
-                        help="decoder maxsteps number.")
+    parser.add_argument("--encoder_recurrent_steps", type=int, default=6,
+                        help="encoder recurrent steps number.")
+    parser.add_argument("--decoder_recurrent_steps", type=int, default=6,
+                        help="decoder recurrent steps number.")
     # ------------------------------------------------------------------------------------------------------------------
     parser.add_argument("--optimizer", type=str, default="adam", help="sgd | adam")
-    parser.add_argument("--learning_rate", type=float, default=0.0001,
+    parser.add_argument("--learning_rate", type=float, default=0.001,
                         help="Learning rate: 1.0 for sgd; Adam: 0.001 | 0.0001")
     parser.add_argument("--decay_factor", type=float, default=0.5,
                         help="Learning rate decay_factor")
@@ -272,7 +244,7 @@ def add_Argumets(parser):
                         help="L1 or L2 regularization lambda")
     parser.add_argument("--act_epsilon", type=float, default=0.01,
                         help="act epsilon")
-    parser.add_argument("--train_steps", type=int, default=5000,
+    parser.add_argument("--train_steps", type=int, default=1600,
                         help="total training steps")
     parser.add_argument("--warmup_steps", type=int, default=50000,
                         help="How many steps we inverse-decay learning.")
@@ -282,7 +254,7 @@ def add_Argumets(parser):
                         help="True means use learning rate warmup schema")
     parser.add_argument("--lr_decay", type="bool", nargs='?', const=True, default=False,
                         help="True means use learning rate decay schema")
-    parser.add_argument("--whitespace_or_nonws_slip", type="bool", nargs='?', const=True, default=True,
+    parser.add_argument("--whitespace_or_nonws_slip", type="bool", nargs='?', const=True, default=w_split,
                         help="True means whitespace slip; False means no whitespace slip")
     parser.add_argument("--label_smooth", type="bool", nargs='?', const=True, default=True,
                         help="if label smooth or not. True means label smooth; False means not")
@@ -316,7 +288,7 @@ def run_main(argv=None):
     # 1. ----------------------------------------self-defined HPARAM----------------------------------------------------
     params = tf.contrib.training.HParams(
         train_steps=FLAGS.train_steps,  # define training steps
-        min_eval_frequency=200,  # define the evaluation interval
+        min_eval_frequency=1000,  # define the evaluation interval
         min_summary_frequency=200,  # define checkpoints save interval
         log_steps=200,  # define the log print out interval
         learning_rate=FLAGS.learning_rate,  # define learning rate
@@ -324,7 +296,6 @@ def run_main(argv=None):
     )
     # ------------------------------------------------------------------------------------------------------------------
     # 2. ----------------------------define the training and evaluation env parameters----------------------------------
-    # RunConfig is used to set the env parameters, like model saving dir, checkpoints save interval, etc.
     run_config = tf.estimator.RunConfig()
     run_config = run_config.replace(
         model_dir=FLAGS.model_dir,
@@ -334,8 +305,6 @@ def run_main(argv=None):
 
     # ------------------------------------------------------------------------------------------------------------------
     # 3. ------------------------------------------Define Estimator-----------------------------------------------------
-    # the standard estimator architecture, almost has no any need to modify it, in almost all of
-    # the machine learning process.
     estimator = tf.estimator.Estimator(
         model_fn=model_fn,  # First-class function
         params=params,  # HParams
@@ -343,8 +312,6 @@ def run_main(argv=None):
     )
     # ------------------------------------------------------------------------------------------------------------------
     # 4. ----------------------------------prepare the training and evluation specs-------------------------------------
-    # get the training, evaluation and prediction features and labels.
-    # different task has different data architecture, so PLEASE take more care about the data type, dimension, etc.
 
     train_input_fn, train_input_hook = get_train_inputs(src=FLAGS.train_src_file_path, tgt=FLAGS.train_tgt_file_path,
                                                         batch_size=FLAGS.batch_size)
@@ -357,7 +324,6 @@ def run_main(argv=None):
     eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, hooks=[eval_input_hook])
     # ------------------------------------------------------------------------------------------------------------------
     # 5. ----------------------------------construct the train_and_evaluate---------------------------------------------
-
     tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
     # ------------------------------------------------------------------------------------------------------------------
     # 6. --------------------------------------------Prediction Process-------------------------------------------------
@@ -384,13 +350,22 @@ def run_main(argv=None):
     def clean(inputs):
         out = []
         for each in inputs:
-            temp = ''
-            for word in each.strip().split():
-                if word != EOS:
-                    temp += word + ' '
-                else:
-                    break
-            out.append(temp.strip())
+            if FLAGS.whitespace_or_nonws_slip:
+                temp = ''
+                for word in each.strip().split():
+                    if word != EOS:
+                        temp += word + ' '
+                    else:
+                        break
+                out.append(temp.strip())
+            else:
+                temp = ''
+                for word in each:
+                    if word != EOS:
+                        temp += word
+                    else:
+                        break
+                out.append(temp.strip())
         return out
 
     pred_label_show = clean(de_batches2string(pred_label))
@@ -402,23 +377,10 @@ def run_main(argv=None):
         print('Predicted out String:' + data_show)
         print("----------------------------------------------------------------------------------------")
 
-    # self-defined Accuracy function, to be used for self accuracy generating
     print("Accuracy:", accuracy(pred_out, pred_label))
 
 
 def model_fn(features, labels, mode, params):
-    """Model function used in the estimator.
-
-    Args:
-        features (Tensor): Input features to the model.
-        labels (Tensor): Labels tensor for training and evaluation.
-        mode (ModeKeys): Specifies if training, evaluation or prediction.
-        params (HParams): hyperparameters.
-
-    Returns:
-        (EstimatorSpec): Model to be run by Estimator.
-    """
-    # Loss, training and eval operations are not needed during inference.
     loss = None
     train_op = None
     eval_metric_ops = {}
@@ -432,7 +394,6 @@ def model_fn(features, labels, mode, params):
         return ((1 - epsilon) * inputs) + (epsilon / K)
 
     if mode != ModeKeys.PREDICT:
-        # features has shape of [B, T]
         features, feature_len = features
         labels_in, label_out, label_len = labels
 
@@ -440,21 +401,18 @@ def model_fn(features, labels, mode, params):
         tgt_seq_mask = tf.expand_dims(tgt_seq_mask_original, axis=2)  # [B,T,1]
 
         label_one_hot = tf.one_hot(indices=label_out, depth=FLAGS.output_vocab_size, axis=-1)  # [B, T, V]
-        label_one_hot_mask = label_one_hot * tgt_seq_mask  # only use the valuable data, 0 mask the non-valuable data
+        label_one_hot_mask = label_one_hot * tgt_seq_mask
         logits = architecture(features, feature_len, labels_in, label_len, mode)
-        logits_mask = logits * tgt_seq_mask  # only use the valuable data, 0 mask the non-valuable data
-        predictions = tf.nn.softmax(logits) * tgt_seq_mask  # only use the valuable data, 0 mask the non-valuable data
+        logits_mask = logits * tgt_seq_mask
+        predictions = tf.nn.softmax(logits) * tgt_seq_mask
 
         loss = tf.nn.softmax_cross_entropy_with_logits_v2(
             labels=label_smoothing(label_one_hot_mask, FLAGS.label_smooth), logits=logits_mask)
         loss = tf.reduce_sum(loss) / tf.count_nonzero(tgt_seq_mask, dtype=tf.float32)
 
-        # train_op = get_train_op_fn(loss, params)
         train_op = get_train_op(loss, params)
-        # only use the valuable data, 0 mask the non-valuable data
         eval_metric_ops = get_eval_metric_ops(tf.argmax(label_one_hot_mask, axis=-1), tf.argmax(predictions, axis=-1),
                                               tgt_seq_mask_original)
-
     else:
         feature_len = features[:, -1]
         features = features[:, :-1]
@@ -472,9 +430,7 @@ def model_fn(features, labels, mode, params):
 
 
 def get_train_op(loss, params):
-
     def get_learning_rate_warmup(hparam):
-        # Get learning rate warmup.
         warmup_steps = hparam.warmup_steps
         warmup_factor = tf.exp(tf.log(0.01) / warmup_steps)
         inv_decay = warmup_factor ** (
@@ -487,7 +443,6 @@ def get_train_op(loss, params):
             name="learning_rate_warump_cond")
 
     def get_learning_rate_decay(hparam):
-
         decay_factor = FLAGS.decay_factor
         start_decay_step = int(
             hparam.train_steps * 4 / 5)
@@ -515,17 +470,14 @@ def get_train_op(loss, params):
 
     tf.summary.scalar("learning_rate", learning_rate)
     trainable_params = tf.trainable_variables()
-
     opt = None
     if FLAGS.optimizer == 'adam':
         opt = tf.train.AdamOptimizer(learning_rate)
     elif FLAGS.optimizer == 'sgd':
         opt = tf.train.GradientDescentOptimizer(learning_rate)
 
-    # compute gradients for params
     gradients = tf.gradients(loss, trainable_params, colocate_gradients_with_ops=True)
 
-    # process gradients
     clipped_gradients, norm = tf.clip_by_global_norm(gradients, FLAGS.max_gradient_norm)
     train_op = opt.apply_gradients(zip(clipped_gradients, trainable_params), tf.train.get_global_step())
 
@@ -534,7 +486,6 @@ def get_train_op(loss, params):
 
 
 def get_train_op_fn(loss, params):
-
     return tf.contrib.layers.optimize_loss(
         loss=loss,
         global_step=tf.train.get_global_step(),
@@ -544,7 +495,6 @@ def get_train_op_fn(loss, params):
 
 
 def get_eval_metric_ops(labels, predictions, mask):
-
     return {
         'Accuracy': tf.metrics.accuracy(
             labels=labels,
@@ -555,6 +505,8 @@ def get_eval_metric_ops(labels, predictions, mask):
 
 
 def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode):
+
+    regularizer = tf.keras.regularizers.l2(l=FLAGS.reg_lambda)
 
     def query_mask(query_batch_length, query_max_length):
 
@@ -572,94 +524,112 @@ def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode)
 
         return mask
 
-    def normalization(inputs):
+    def normalization(inputs, scope):
 
-        epsilon = 1e-8
-        params_shape = inputs.get_shape().as_list()[-1]
+        with tf.variable_scope(name_or_scope=scope, reuse=tf.AUTO_REUSE):
+            epsilon = 1e-8
+            params_shape = inputs.get_shape().as_list()[-1]
 
-        mean, variance = tf.nn.moments(inputs, [-1], keep_dims=True)
+            mean, variance = tf.nn.moments(inputs, [-1], keep_dims=True)
 
-        zeros = lambda: tf.zeros([params_shape], dtype=tf.float32)
-        beta = tf.Variable(
-            initial_value=zeros,
-            name='beta',
-            dtype=tf.float32)
+            zeros = lambda: tf.zeros([params_shape], dtype=tf.float32)
+            beta = tf.get_variable(name='beta', initializer=zeros, dtype=tf.float32)
 
-        ones = lambda: tf.ones([params_shape], dtype=tf.float32)
-        gamma = tf.Variable(
-            initial_value=ones,
-            name='gamma',
-            dtype=tf.float32)
-
-        outputs = tf.nn.batch_normalization(inputs, mean, variance, beta, gamma, epsilon)
+            ones = lambda: tf.ones([params_shape], dtype=tf.float32)
+            gamma = tf.get_variable(name='gamma', initializer=ones, dtype=tf.float32)
+            """
+            normalized = (inputs - mean) / ((variance + epsilon) ** (.5))
+            outputs = gamma * normalized + beta
+            """
+            outputs = tf.nn.batch_normalization(inputs, mean, variance, beta, gamma, epsilon)
 
         return outputs
 
-    def input_embedding(inputs, vocab_size, num_units):
+    with tf.variable_scope(name_or_scope='encoder_word_embedding', reuse=tf.AUTO_REUSE):
+        encoder_embedding = tf.get_variable(name='en_embedding',
+                                            shape=[FLAGS.input_vocab_size, FLAGS.num_units],
+                                            dtype=tf.float32,
+                                            initializer=tf.variance_scaling_initializer())
 
-        with tf.variable_scope(name_or_scope='word_embedding', reuse=tf.AUTO_REUSE):
-            embedding = tf.get_variable(name='embedding', shape=[vocab_size, num_units], dtype=tf.float32,
-                                        initializer=tf.contrib.layers.variance_scaling_initializer())
+        encoder_embedding = tf.concat((tf.zeros([1, FLAGS.num_units]), encoder_embedding[1:, :]), axis=0)
 
-            embedding = tf.concat((tf.zeros([1, num_units]), embedding[1:, :]), axis=0)
+    with tf.variable_scope(name_or_scope='decoder_word_embedding', reuse=tf.AUTO_REUSE):
+        decoder_embedding = tf.get_variable(name='de_embedding',
+                                            shape=[FLAGS.output_vocab_size, FLAGS.num_units],
+                                            dtype=tf.float32,
+                                            initializer=tf.variance_scaling_initializer())
 
-        outputs = tf.nn.embedding_lookup(embedding, inputs)
+        decoder_embedding = tf.concat((tf.zeros([1, FLAGS.num_units]), decoder_embedding[1:, :]), axis=0)
+
+    def encoder_input_embedding(inputs):
+        outputs = tf.nn.embedding_lookup(encoder_embedding, inputs)
+        outputs = outputs * FLAGS.num_units ** 0.5
         return outputs
 
-    def position_embedding(inputs, str_length, num_units):
+    def decoder_input_embedding(inputs):
+        outputs = tf.nn.embedding_lookup(decoder_embedding, inputs)
+        outputs = outputs * FLAGS.num_units ** 0.5
+        return outputs
+
+    position_length = max(FLAGS.max_input_time_steps, FLAGS.max_output_time_steps)
+
+    position_table = np.full(shape=[position_length, FLAGS.num_units], fill_value=0.0, dtype=np.float32)
+
+    for pos in range(position_length):
+        for i in range(FLAGS.num_units):
+            if i % 2 == 0:
+                position_table[pos, i] = np.sin(pos / np.power(10000, 2.0 * i / FLAGS.num_units))
+            else:
+                position_table[pos, i] = np.cos(pos / np.power(10000, 2.0 * (i - 1) / FLAGS.num_units))
+
+    position_table = tf.convert_to_tensor(position_table)
+
+    def encoder_position_embedding(inputs):
         # input shape is [B,T,H]
-        position_table = np.full(shape=[str_length, num_units], fill_value=0.0, dtype=np.float32)
-
-        for pos in range(str_length):
-            for i in range(num_units):
-                if i % 2 == 0:
-                    position_table[pos, i] = np.sin(pos / np.power(10000, 2.0 * i / num_units))
-                else:
-                    position_table[pos, i] = np.cos(pos / np.power(10000, 2.0 * (i - 1) / num_units))
-
-        position_table = tf.convert_to_tensor(position_table)
-
-        step = tf.reshape(tf.range(str_length), shape=[1, str_length])
-        batch_step = tf.tile(step, [tf.shape(inputs)[0], 1])
+        step = tf.range(FLAGS.max_input_time_steps)
+        batch_step = tf.tile([step], [tf.shape(inputs)[0], 1])
         outputs = tf.nn.embedding_lookup(position_table, batch_step)
+        outputs = outputs * FLAGS.num_units ** 0.5
         return outputs
 
-    def step_embedding(inputs, current_step, max_steps, num_units):
-        act_step_table = np.full(shape=[max_steps, num_units], fill_value=0.0, dtype=np.float32)
+    def decoder_position_embedding(inputs):
+        # input shape is [B,T,H]
+        step = tf.range(FLAGS.max_output_time_steps)
+        batch_step = tf.tile([step], [tf.shape(inputs)[0], 1])
+        outputs = tf.nn.embedding_lookup(position_table, batch_step)
+        outputs = outputs * FLAGS.num_units ** 0.5
+        return outputs
 
-        for act_step in range(max_steps):
-            for i in range(num_units):
-                if i % 2 == 0:
-                    act_step_table[act_step, i] = np.sin(act_step / np.power(10000, 2.0 * i / num_units))
-                else:
-                    act_step_table[act_step, i] = np.cos(act_step / np.power(10000, 2.0 * (i - 1) / num_units))
 
-        act_step_table = tf.convert_to_tensor(act_step_table)
+    recurrent_steps = max(FLAGS.encoder_recurrent_steps, FLAGS.decoder_recurrent_steps)
+    act_step_table = np.full(shape=[recurrent_steps, FLAGS.num_units], fill_value=0.0, dtype=np.float32)
 
+    for act_step in range(recurrent_steps):
+        for i in range(FLAGS.num_units):
+            if i % 2 == 0:
+                act_step_table[act_step, i] = np.sin(act_step / np.power(10000, 2.0 * i / FLAGS.num_units))
+            else:
+                act_step_table[act_step, i] = np.cos(act_step / np.power(10000, 2.0 * (i - 1) / FLAGS.num_units))
+
+    act_step_table = tf.convert_to_tensor(act_step_table)
+
+    def recurrent_step_embedding(inputs, current_step):
         batch_steps = tf.fill(tf.shape(inputs)[:-1], current_step)
-
         outputs = tf.nn.embedding_lookup(act_step_table, batch_steps)
-        return outputs
-
-    def feed_forward(inputs):
-        outputs = tf.layers.dense(inputs=inputs, units=4 * FLAGS.num_units)
-        outputs = tf.layers.dense(inputs=outputs, units=FLAGS.num_units)
-
-        outputs = outputs + inputs
-
+        outputs = outputs * FLAGS.num_units ** 0.5
         return outputs
 
     def projection_layer(inputs):
         with tf.variable_scope(name_or_scope='projection', reuse=tf.AUTO_REUSE):
-            outputs = tf.layers.dense(inputs=inputs, units=FLAGS.output_vocab_size)
+            outputs = tf.layers.dense(inputs=inputs, units=FLAGS.output_vocab_size, name='pl')
         return outputs
 
-    def multihead_attention(query_inputs, key_inputs, value_inputs, query_mask, key_mask, scope):
+    def multihead_attention(query_inputs, key_inputs, value_inputs, key_mask, scope):
 
         with tf.variable_scope(name_or_scope=scope, reuse=tf.AUTO_REUSE):
-            Q = tf.layers.dense(query_inputs, FLAGS.num_units, activation=tf.nn.relu)
-            K = tf.layers.dense(key_inputs, FLAGS.num_units, activation=tf.nn.relu)
-            V = tf.layers.dense(value_inputs, FLAGS.num_units, activation=tf.nn.relu)
+            Q = tf.layers.dense(query_inputs, FLAGS.num_units, activation=tf.nn.relu, name='q')
+            K = tf.layers.dense(key_inputs, FLAGS.num_units, activation=tf.nn.relu, name='k')
+            V = tf.layers.dense(value_inputs, FLAGS.num_units, activation=tf.nn.relu, name='v')
 
             # [FLAGS.num_heads*B, T, FLAGS.num_units/FLAGS.num_heads]
             Q_head = tf.concat(tf.split(Q, FLAGS.num_heads, axis=-1), axis=0)
@@ -678,90 +648,71 @@ def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode)
             outputs = query_inputs + outputs
             # Dropout
             outputs = tf.layers.dropout(outputs, rate=FLAGS.dropout, training=(mode == ModeKeys.TRAIN))
-            # mask
-            outputs *= query_mask
-            # Normalization
-            outputs = normalization(outputs)
-            # mask
-            outputs *= query_mask
+
+            outputs = normalization(outputs, scope)
 
         return outputs
 
-    def transition_function(inputs, query_mask, scope):
+    def transition_function(inputs, scope):
 
         with tf.variable_scope(name_or_scope=scope, reuse=tf.AUTO_REUSE):
-            outputs = feed_forward(inputs)
-            # Dropout
+            outputs = tf.layers.dense(inputs=inputs, units=4 * FLAGS.num_units, name='l1')
+            outputs = tf.layers.dense(inputs=outputs, units=FLAGS.num_units, name='l2')
+
+            outputs = outputs + inputs
             outputs = tf.layers.dropout(outputs, rate=FLAGS.dropout, training=(mode == ModeKeys.TRAIN))
-            # mask
-            outputs *= query_mask
-            # Normalization
-            outputs = normalization(outputs)
-            # mask
-            outputs *= query_mask
+
+            outputs = normalization(outputs, scope)
 
         return outputs
 
-    def encoder_act_unit(query_inputs, query_mask, key_mask, current_step):
+    def encoder_act_unit(query_inputs, key_mask, current_step):
         ## Positional Encoding
-        query_inputs += position_embedding(query_inputs,
-                                           str_length=FLAGS.max_input_time_steps,
-                                           num_units=FLAGS.num_units)
+        outputs = query_inputs
+        outputs += encoder_position_embedding(outputs)
 
         # timesteps embedding
-        query_inputs += step_embedding(inputs=query_inputs,
-                                       current_step=current_step,
-                                       max_steps=FLAGS.encoder_maxsteps,
-                                       num_units=FLAGS.num_units)
+        outputs += recurrent_step_embedding(inputs=outputs, current_step=current_step)
 
         # multi_attention
-        outputs = multihead_attention(query_inputs=query_inputs,
-                                      key_inputs=query_inputs,
-                                      value_inputs=query_inputs,
-                                      query_mask=query_mask,
+        outputs = multihead_attention(query_inputs=outputs,
+                                      key_inputs=outputs,
+                                      value_inputs=outputs,
                                       key_mask=key_mask,
                                       scope='encoder_mul_attention')
 
         # transition_function
         outputs = transition_function(inputs=outputs,
-                                      query_mask=query_mask,
                                       scope='encoder_transition')
 
         return outputs
 
-    def decoder_act_unit(enc_outputs, query_inputs, dec_query_mask, dec_key_mask, enc_key_mask, current_step, str_length):
+    def decoder_act_unit(enc_outputs, query_inputs, dec_key_mask, enc_key_mask, current_step):
         ## Positional Encoding
-        query_inputs += position_embedding(query_inputs,
-                                           str_length=str_length,
-                                           num_units=FLAGS.num_units)
+        outputs = query_inputs
+        outputs += decoder_position_embedding(outputs)
         # timesteps embedding
-        query_inputs += step_embedding(inputs=query_inputs,
-                                       current_step=current_step,
-                                       max_steps=FLAGS.decoder_maxsteps,
-                                       num_units=FLAGS.num_units)
+        outputs += recurrent_step_embedding(inputs=outputs, current_step=current_step)
 
         # self_multi_attention
-        outputs = multihead_attention(query_inputs=query_inputs,
-                                      key_inputs=query_inputs,
-                                      value_inputs=query_inputs,
-                                      query_mask=dec_query_mask,
+        outputs = multihead_attention(query_inputs=outputs,
+                                      key_inputs=outputs,
+                                      value_inputs=outputs,
                                       key_mask=dec_key_mask,
                                       scope='decoder_self_mul_attention')
         # enc_dec_mul_attention
         outputs = multihead_attention(query_inputs=outputs,
                                       key_inputs=enc_outputs,
                                       value_inputs=enc_outputs,
-                                      query_mask=dec_query_mask,
                                       key_mask=enc_key_mask,
                                       scope='enc_dec_mul_attention')
         # transition_function
         outputs = transition_function(inputs=outputs,
-                                      query_mask=dec_query_mask,
                                       scope='decoder_transition')
 
         return outputs
 
-    def act(inputs, query_mask, max_steps, processing_unit):
+    def act(inputs, max_steps, processing_unit):
 
         def if_continue(_prev_outputs, _final_outputs, _prev_accum_halt, _go_sign, _current_step):
 
@@ -770,17 +721,9 @@ def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode)
 
         def step_in(_prev_outputs, _final_outputs, _prev_accum_halt, _go_sign, _current_step):
 
-            _processing_outputs = processing_unit(query_inputs=_prev_outputs, current_step=_current_step)
-            _current_outputs = \
-                _prev_outputs * tf.cast(tf.equal(_go_sign, 0.0), dtype=tf.float32) + \
-                _processing_outputs * _go_sign
-            _current_halt = tf.layers.dense(
-                inputs=_current_outputs,
-                units=1,
-                activation=tf.nn.sigmoid,
-                name='halt'
-            )  # [B, T, 1]
-            # _current_halt = tf.squeeze(_current_halt) # [B, T]
+            _current_outputs = processing_unit(query_inputs=_prev_outputs, current_step=_current_step)
+            with tf.variable_scope(name_or_scope='act_halt', reuse=tf.AUTO_REUSE):
+                _current_halt = tf.layers.dense(inputs=_current_outputs, units=1, activation=tf.nn.sigmoid, name='halt')  # [B, T, 1]
 
             if _current_step == max_steps-1:
 
@@ -803,16 +746,13 @@ def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode)
 
                 R_N_t = (1.0 - _prev_accum_halt) * _current_RNT_sign
 
-                _current_halt = (_current_halt * tf.cast(tf.less(_current_RNT_sign, 1.0),
-                                                         dtype=tf.float32) + R_N_t) * _go_sign
+                _current_halt = (_current_halt * tf.cast(tf.less(_current_RNT_sign, 1.0), dtype=tf.float32) + R_N_t) * _go_sign
 
                 _current_accum_halt = (_prev_accum_halt + _current_halt) * _go_sign
 
                 _final_outputs += _current_outputs * _current_halt
 
                 _go_sign -= _current_RNT_sign
-
-                _go_sign *= query_mask
 
                 _current_step += 1
 
@@ -824,7 +764,7 @@ def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode)
 
         prev_accum_halt = tf.expand_dims(tf.zeros(tf.shape(inputs)[:-1]), axis=2)  # [B,T,1]
 
-        go_sign = tf.expand_dims(tf.ones(tf.shape(inputs)[:-1]), axis=2) * query_mask # [B,T,1]
+        go_sign = tf.expand_dims(tf.ones(tf.shape(inputs)[:-1]), axis=2)  # [B,T,1]
 
         current_step = 0
 
@@ -843,118 +783,138 @@ def architecture(encoder_inputs, encoder_len, decoder_inputs, decoder_len, mode)
 
         return final_outputs
 
-    def encoder(encoder_in, encoder_in_batch_length):
-
-        q_mask = query_mask(encoder_in_batch_length, FLAGS.max_input_time_steps)
+    def encoder(encoder_in):
         k_mask = key_mask(encoder_in)
 
         with tf.variable_scope(name_or_scope='encoding', reuse=tf.AUTO_REUSE):
             ## Embedding
-            enc = input_embedding(encoder_in,
-                                  vocab_size=FLAGS.input_vocab_size,
-                                  num_units=FLAGS.num_units)
+            enc = encoder_input_embedding(encoder_in)
 
             ## ACT
             processing_unit = functools.partial(
                 encoder_act_unit,
-                query_mask=q_mask,
                 key_mask=k_mask
             )
 
-            encoder_outputs = act(enc, q_mask, FLAGS.encoder_maxsteps, processing_unit)
+            encoder_outputs = act(enc, FLAGS.encoder_recurrent_steps, processing_unit)
 
         return encoder_outputs
 
-    def decoder_train_eval(encoder_in, encoder_out):
+    def decoder_train_eval(encoder_in, decoder_in, encoder_out):
 
-        batch_size = tf.shape(encoder_in)[0]
-        tgt_inputs = tf.cast(tf.sequence_mask([1], 1), tf.int32)
-        tgt_inputs = tf.tile(tgt_inputs, [batch_size, 1])
-        logits = None
-        for tgt_len in trange(FLAGS.max_output_time_steps):
-            mask = tf.cast(tf.sequence_mask([tgt_len + 1], tgt_len + 1), tf.int32)
-            mask = tf.tile(mask, [batch_size, 1])
-            decoder_in_batch_length = [tgt_len + 1]
-            decoder_in_batch_length = tf.tile(decoder_in_batch_length, [batch_size])
-            tgt_inputs = tgt_inputs * mask
+        batch_size = tf.shape(decoder_in)[0]
+        outputs = tf.zeros([FLAGS.max_output_time_steps, FLAGS.num_units], dtype=tf.float32)  # [T, H]
+        outputs = tf.tile([outputs], [batch_size, 1, 1])  # [B,T,H]
+        tgt_length = 0
 
-            dec_q_mask = query_mask(decoder_in_batch_length, tgt_len + 1)
+        def step_in(time_steps, last_outputs):
+            length_mask = tf.cast(tf.sequence_mask([time_steps + 1], FLAGS.max_output_time_steps), tf.int32)
+            length_mask = tf.tile(length_mask, [batch_size, 1])  # [B,T]
+
+            pos_mask = tf.one_hot(indices=time_steps, depth=FLAGS.max_output_time_steps, axis=-1, dtype=tf.float32)  # [T]
+            pos_mask = tf.tile([pos_mask], [batch_size, 1])  # [B,T]
+            pos_mask = tf.expand_dims(pos_mask, axis=2)  # [B,T,1]
+
+            tgt_inputs = decoder_in * length_mask
+
             dec_k_mask = key_mask(tgt_inputs)
             enc_k_mask = key_mask(encoder_in)
 
             with tf.variable_scope(name_or_scope='decoding', reuse=tf.AUTO_REUSE):
                 ## Embedding
-                dec = input_embedding(tgt_inputs,
-                                      vocab_size=FLAGS.output_vocab_size,
-                                      num_units=FLAGS.num_units)
+                dec = decoder_input_embedding(tgt_inputs)
 
                 ## ACT
                 processing_unit = functools.partial(
                     decoder_act_unit,
                     enc_outputs=encoder_out,
-                    dec_query_mask=dec_q_mask,
                     dec_key_mask=dec_k_mask,
-                    enc_key_mask=enc_k_mask,
-                    str_length=tgt_len+1
+                    enc_key_mask=enc_k_mask
                 )
 
-                decoder_outputs = act(dec, dec_q_mask, FLAGS.decoder_maxsteps, processing_unit)
+                prediction = act(dec, FLAGS.decoder_recurrent_steps, processing_unit)
+                last_outputs += prediction * pos_mask
 
-            logits = projection_layer(decoder_outputs)  # [B,T,V]
-            prediction_outputs = tf.nn.softmax(logits)  # [B,T,V]
-            prediction_outputs = tf.argmax(prediction_outputs, axis=-1, output_type=tf.int32)  # [B,T]
-            paddings = tf.constant([[0, 0], [1, 0]])
-            tgt_inputs = tf.pad(prediction_outputs, paddings, "CONSTANT", constant_values=1)
+            time_steps +=1
 
+            return time_steps, last_outputs
+
+        tgt_length, outputs = tf.while_loop(
+            cond=lambda tgt_length, *_: tgt_length < FLAGS.max_output_time_steps,
+            body=step_in,
+            loop_vars=[tgt_length, outputs],
+            shape_invariants=[
+                tf.TensorShape([]),
+                outputs.get_shape()
+            ]
+        )
+
+        logits = projection_layer(outputs)  # [B,T,V]
         return logits
+
 
     def decoder_predict(encoder_in, encoder_out):
 
         batch_size = tf.shape(encoder_in)[0]
-        tgt_inputs = tf.cast(tf.sequence_mask([1], 1), tf.int32)
-        tgt_inputs = tf.tile(tgt_inputs, [batch_size, 1])
+        outputs = tf.zeros([1, FLAGS.max_output_time_steps], dtype=tf.int32)  # [1,T]
+        outputs = tf.tile(outputs, [batch_size, 1]) #[B,T]
+        tgt_length = 0
 
-        prediction = None
+        def step_in(time_steps, last_outputs):
 
-        for tgt_len in trange(FLAGS.max_output_time_steps):
-            mask = tf.cast(tf.sequence_mask([tgt_len + 1], tgt_len + 1), tf.int32)
-            mask = tf.tile(mask, [batch_size, 1])
-            decoder_in_batch_length = [tgt_len + 1]
-            decoder_in_batch_length = tf.tile(decoder_in_batch_length, [batch_size])
-            tgt_inputs = tgt_inputs * mask
+            paddings = tf.constant([[0, 0], [1, 0]])
+            tgt_inputs = tf.pad(last_outputs, paddings, "CONSTANT", constant_values=1)
+            tgt_inputs = tgt_inputs[:, :FLAGS.max_output_time_steps]
 
-            dec_q_mask = query_mask(decoder_in_batch_length, tgt_len + 1)
+            length_mask = tf.cast(tf.sequence_mask([time_steps + 1], FLAGS.max_output_time_steps), tf.int32)
+            length_mask = tf.tile(length_mask, [batch_size, 1])  # [B,T]
+
+            pos_mask = tf.one_hot(indices=time_steps, depth=FLAGS.max_output_time_steps, axis=-1, dtype=tf.int32)  # [T]
+            pos_mask = tf.tile([pos_mask], [batch_size, 1])  # [B,T]
+
+            tgt_inputs = tgt_inputs * length_mask
+
             dec_k_mask = key_mask(tgt_inputs)
             enc_k_mask = key_mask(encoder_in)
 
             with tf.variable_scope(name_or_scope='decoding', reuse=tf.AUTO_REUSE):
                 ## Embedding
-                dec = input_embedding(tgt_inputs,
-                                      vocab_size=FLAGS.output_vocab_size,
-                                      num_units=FLAGS.num_units)
+                dec = decoder_input_embedding(tgt_inputs)
 
                 ## ACT
                 processing_unit = functools.partial(
                     decoder_act_unit,
                     enc_outputs=encoder_out,
-                    dec_query_mask=dec_q_mask,
                     dec_key_mask=dec_k_mask,
-                    enc_key_mask=enc_k_mask,
-                    str_length=tgt_len+1
+                    enc_key_mask=enc_k_mask
                 )
 
-                decoder_outputs = act(dec, dec_q_mask, FLAGS.decoder_maxsteps, processing_unit)
+                prediction = act(dec, FLAGS.decoder_recurrent_steps, processing_unit)
 
-            prediction = tf.nn.softmax(projection_layer(decoder_outputs))  # [B,T,V]
-            prediction_outputs = tf.argmax(prediction, axis=-1, output_type=tf.int32)  # [B,T]
-            paddings = tf.constant([[0, 0], [1, 0]])
-            tgt_inputs = tf.pad(prediction_outputs, paddings, "CONSTANT", constant_values=1)
+            prediction = tf.nn.softmax(projection_layer(prediction))  # [B,T,V]
+            prediction = tf.argmax(prediction, axis=-1, output_type=tf.int32)  # [B,T]
+            last_outputs += prediction * pos_mask
 
+            time_steps += 1
+
+            return time_steps, last_outputs
+
+        tgt_length, outputs = tf.while_loop(
+            cond=lambda tgt_length, *_: tgt_length < FLAGS.max_output_time_steps,
+            body=step_in,
+            loop_vars=[tgt_length, outputs],
+            shape_invariants=[
+                tf.TensorShape([]),
+                outputs.get_shape()
+            ]
+        )
+
+        prediction = tf.one_hot(indices=outputs, depth=FLAGS.output_vocab_size, axis=-1)  # [B, T, V]
         return prediction
 
-    enc_outputs = encoder(encoder_inputs, encoder_len)
+    enc_outputs = encoder(encoder_inputs)
     if mode != ModeKeys.PREDICT:
-        logits = decoder_train_eval(encoder_inputs, enc_outputs)
+        logits = decoder_train_eval(encoder_inputs, decoder_inputs, enc_outputs)
     else:
         logits = decoder_predict(encoder_inputs, enc_outputs)
 
@@ -977,21 +937,11 @@ class InitializerHook(tf.train.SessionRunHook):
 
 # Define the training inputs
 def get_train_inputs(src, tgt, batch_size):
-    """Return the input function to get the training data.
-    Returns:
-        (Input function, IteratorInitializerHook):
-            - Function that returns (features, labels) when called.
-            - Hook to initialise input iterator.
-    """
+
     initializer_hook = InitializerHook()
 
     def train_inputs():
-        """Returns training set as Operations.
 
-        Returns:
-            (features, labels) Operations that iterate over the dataset
-            on every training
-        """
         with tf.name_scope('Training_data'):
             src_vocab_table, tgt_vocab_table = create_vocab_tables(FLAGS.src_vocab_file_path, FLAGS.tgt_vocab_file_path)
             src_datasets = tf.data.TextLineDataset(src)
@@ -1003,7 +953,7 @@ def get_train_inputs(src, tgt, batch_size):
             else:
                 src_tgt_datasets = src_tgt_datasets.map(lambda src, tgt: (
                     tf.string_split([src], delimiter='').values, tf.string_split([tgt], delimiter='').values))
-            # Filter zero length input sequences.
+
             src_tgt_datasets = src_tgt_datasets.filter(
                 lambda src, tgt: tf.logical_and(tf.size(src) > 0, tf.size(tgt) > 0))
 
@@ -1059,27 +1009,13 @@ def get_train_inputs(src, tgt, batch_size):
             initializer_hook.initializer_func = lambda sess: sess.run(iterator.initializer)
             return (next_feature, feature_len), (next_label_in, next_label_out, label_len)
 
-            # Return function and hook
-
     return train_inputs, initializer_hook
 
 
 def get_eval_inputs(src, tgt, batch_size):
-    """Return the input function to get the eval data.
-    Returns:
-        (Input function, IteratorInitializerHook):
-            - Function that returns (features, labels) when called.
-            - Hook to initialise input iterator.
-    """
     initializer_hook = InitializerHook()
 
     def eval_inputs():
-        """Returns eval set as Operations.
-
-        Returns:
-            (features, labels) Operations that iterate over the dataset
-            on every evaluation
-        """
 
         with tf.name_scope('Eval_data'):
             src_vocab_table, tgt_vocab_table = create_vocab_tables(FLAGS.src_vocab_file_path, FLAGS.tgt_vocab_file_path)
@@ -1092,7 +1028,7 @@ def get_eval_inputs(src, tgt, batch_size):
             else:
                 src_tgt_datasets = src_tgt_datasets.map(lambda src, tgt: (
                     tf.string_split([src], delimiter='').values, tf.string_split([tgt], delimiter='').values))
-            # Filter zero length input sequences.
+
             src_tgt_datasets = src_tgt_datasets.filter(
                 lambda src, tgt: tf.logical_and(tf.size(src) > 0, tf.size(tgt) > 0))
 
@@ -1145,32 +1081,18 @@ def get_eval_inputs(src, tgt, batch_size):
             iterator = batched_dataset.make_initializable_iterator()
             next_feature, next_label_in, next_label_out, feature_len, label_len = iterator.get_next()
 
-            # Set runhook to initialize iterator
             initializer_hook.initializer_func = lambda sess: sess.run(iterator.initializer)
 
             return (next_feature, feature_len), (next_label_in, next_label_out, label_len)
 
-    # Return function and hook
     return eval_inputs, initializer_hook
 
 
 def get_predict_inputs(src, batch_size):
-    """Return the input function to get the predict data.
-    Returns:
-        (Input function, IteratorInitializerHook):
-            - Function that returns (features, labels) when called.
-            - Hook to initialise input iterator.
-    """
-    # initializer_hook = pre_InitializerHook()
+
     initializer_hook = InitializerHook()
 
     def predict_inputs():
-        """Returns prediction set as Operations.
-
-        Returns:
-            features Operations that iterate over the dataset
-            on every inference
-        """
 
         with tf.name_scope('Predict_data'):
             src_vocab_table, tgt_vocab_table = create_vocab_tables(FLAGS.src_vocab_file_path, FLAGS.tgt_vocab_file_path)
@@ -1179,7 +1101,7 @@ def get_predict_inputs(src, batch_size):
                 src_datasets = src_datasets.map(lambda src: tf.string_split([src]).values)
             else:
                 src_datasets = src_datasets.map(lambda src: tf.string_split([src], delimiter='').values)
-            # Filter zero length input sequences.
+
             src_datasets = src_datasets.filter(
                 lambda src: tf.size(src) > 0)
 
@@ -1203,6 +1125,7 @@ def get_predict_inputs(src, batch_size):
             iterator = src_datasets.make_initializable_iterator()
             next_feature, feature_len = iterator.get_next()
             initializer_hook.initializer_func = lambda sess: sess.run(iterator.initializer)
+
             return tf.concat([next_feature, tf.expand_dims(feature_len, axis=1)], axis=-1)
 
     return predict_inputs, initializer_hook
